@@ -1,0 +1,41 @@
+---
+# vim:ft=ansible:ts=2:et:
+- name: Install Sysdig
+  apt:
+    pkg: "sysdig"
+    state: present
+    update_cache: yes
+
+- name: Create Local Chisels Directory
+  file:
+    name: "/usr/local/share/sysdig/chisels"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Copy Sysdig Chisel
+  copy:
+    src: "{{ item }}"
+    dest: "/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  with_items:
+    - "usr/local/share/sysdig/chisels/json_useraudit.lua"
+
+- name: Copy Service Definition
+  copy:
+    src: "{{ item }}"
+    dest: "/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  with_items:
+    - "etc/init/sysdig-user-audit.conf"
+
+- name: Disable Service Autostart
+  service:
+    name: "sysdig-user-audit"
+    state: stopped
+    enabled: no
