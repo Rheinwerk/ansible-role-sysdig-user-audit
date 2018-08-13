@@ -1,10 +1,5 @@
 ---
 # vim:ft=ansible:ts=2:et:
-- name: Install Sysdig
-  apt:
-    pkg: "sysdig"
-    state: present
-    update_cache: yes
 
 - name: Create Local Chisels Directory
   file:
