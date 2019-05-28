@@ -19,7 +19,7 @@
   with_items:
     - "usr/local/share/sysdig/chisels/json_useraudit.lua"
 
-- name: Copy Service Definition
+- name: Copy Upstart Service Definition
   copy:
     src: "{{ item }}"
     dest: "/{{ item }}"
@@ -28,6 +28,19 @@
     mode: "0644"
   with_items:
     - "etc/init/sysdig-user-audit.conf"
+  when: ansible_service_mgr == "upstart"
+
+- name: Copy systemd Service Definition
+  copy:
+    src: "{{ item }}"
+    dest: "/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  with_items:
+    - "etc/systemd/system/sysdig-user-audit.service"
+  when: ansible_service_mgr == "systemd"
+
 
 - name: Disable Service Autostart
   service:

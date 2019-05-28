@@ -1,0 +1,13 @@
+[Unit]
+Description=User Activity Audit
+
+[Service]
+Type=simple
+Environment="TZ=Europe/Berlin" "LOGFILE=/var/log/sysdig-user-audit.json"
+
+ExecStartPre=/usr/bin/logger -t useraudit "Starting user activity"
+ExecStartPre=/usr/bin/logger -t useraudit "Writing events to ${LOGFILE}"
+ExecStart=/bin/bash -c '/usr/bin/sysdig -c /usr/local/share/sysdig/chisels/json_useraudit.lua >> ${LOGFILE} 2> >(/usr/bin/logger -t useraudit)'
+
+[Install]
+WantedBy=default.target
