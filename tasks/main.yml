@@ -19,21 +19,21 @@
   with_items:
     - "usr/local/share/sysdig/chisels/json_useraudit.lua"
 
-  - name: Copy on-demand start script
-    copy:
-      src: "{{ item }}"
-      dest: "/{{ item }}"
-      owner: root
-      group: root
-      mode: "0754"
-    with_items:
-      - "usr/local/sbin/pam_sysdig-user-audit.sh"
+- name: Copy on-demand start script
+  copy:
+    src: "{{ item }}"
+    dest: "/{{ item }}"
+    owner: root
+    group: root
+    mode: "0754"
+  with_items:
+    - "usr/local/sbin/pam_sysdig-user-audit.sh"
 
-  - name: Configure SSH pam_exec for sysdig-user-audit
-    lineinfile:
-      path: "/etc/pam.d/sshd"
-      line: 'session    optional pam_exec.so quiet /usr/local/sbin/pam_sysdig-user-audit.sh'
-      insertafter: '@include common-session'
+- name: Configure SSH pam_exec for sysdig-user-audit
+  lineinfile:
+    path: "/etc/pam.d/sshd"
+    line: 'session    optional pam_exec.so quiet /usr/local/sbin/pam_sysdig-user-audit.sh'
+    insertafter: '@include common-session'
 
 - name: Copy Upstart Service Definition
   copy:
