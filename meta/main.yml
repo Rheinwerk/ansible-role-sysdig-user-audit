@@ -10,6 +10,7 @@ galaxy_info:
   - name: Ubuntu
     versions:
     - trusty
+    - bionic
   galaxy_tags:
     - sysdig
 dependencies: []
