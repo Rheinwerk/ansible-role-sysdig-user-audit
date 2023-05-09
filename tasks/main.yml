@@ -2,7 +2,7 @@
 # vim:ft=ansible:ts=2:et:
 
 - name: Create Local Chisels Directory
-  file:
+  ansible.builtin.file:
     name: "/usr/local/share/sysdig/chisels"
     state: directory
     owner: root
@@ -10,7 +10,7 @@
     mode: "0755"
 
 - name: Copy Sysdig Chisel
-  copy:
+  ansible.builtin.copy:
     src: "{{ item }}"
     dest: "/{{ item }}"
     owner: root
@@ -20,7 +20,7 @@
     - "usr/local/share/sysdig/chisels/json_useraudit.lua"
 
 - name: Copy on-demand start script
-  copy:
+  ansible.builtin.copy:
     src: "{{ item }}"
     dest: "/{{ item }}"
     owner: root
@@ -30,13 +30,13 @@
     - "usr/local/sbin/pam_sysdig-user-audit.sh"
 
 - name: Configure SSH pam_exec for sysdig-user-audit
-  lineinfile:
+  ansible.builtin.lineinfile:
     path: "/etc/pam.d/sshd"
     line: 'session    optional pam_exec.so quiet /usr/local/sbin/pam_sysdig-user-audit.sh'
     insertafter: '@include common-session'
 
 - name: Copy Upstart Service Definition
-  copy:
+  ansible.builtin.copy:
     src: "{{ item }}"
     dest: "/{{ item }}"
     owner: root
@@ -47,7 +47,7 @@
   when: ansible_service_mgr == "upstart"
 
 - name: Copy systemd Service Definition
-  copy:
+  ansible.builtin.copy:
     src: "{{ item }}"
     dest: "/{{ item }}"
     owner: root
@@ -59,7 +59,7 @@
 
 
 - name: Disable Service Autostart
-  service:
+  ansible.builtin.service:
     name: "sysdig-user-audit"
     state: stopped
     enabled: no
