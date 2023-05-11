@@ -5,7 +5,7 @@
 
   pre_tasks:
     - name: update APT Cache
-      apt:
+      ansible.builtin.apt:
         update_cache: yes
         cache_valid_time: 600
       register: result
@@ -13,7 +13,7 @@
       when: ansible_os_family == 'Debian'
 
     - name: Install openssh-server
-      package:
+      ansible.builtin.package:
         name: "{{ item }}"
         state: present
       with_items:
@@ -21,12 +21,12 @@
 
     # https://github.com/microsoft/WSL/issues/3621
     - name: Create /run/sshd inside containers
-      file:
+      ansible.builtin.file:
         path: /run/sshd
         state: directory
       when: ansible_virtualization_type in ['docker', 'podman', 'lxc', 'containerd']
 
   tasks:
     - name: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
-      include_role:
+      ansible.builtin.include_role:
         name: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
