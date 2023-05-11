@@ -24,8 +24,7 @@
       ansible.builtin.file:
         path: /run/sshd
         state: directory
-      when: ansible_virtualization_type in ['docker', 'podman', 'lxc', 'containerd']
-
+      when: ansible_virtualization_type in ['docker', 'podman', 'lxc', 'containerd', 'VirtualPC']
   tasks:
     - name: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
       ansible.builtin.include_role:
