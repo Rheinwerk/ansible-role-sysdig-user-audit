@@ -4,7 +4,7 @@
   become: true
 
   pre_tasks:
-    - name: update APT Cache
+    - name: Update APT Cache
       ansible.builtin.apt:
         update_cache: yes
         cache_valid_time: 600
@@ -24,6 +24,8 @@
       ansible.builtin.file:
         path: /run/sshd
         state: directory
+        mode: "0755"
+        owner: root
       when: ansible_virtualization_type in ['docker', 'podman', 'lxc', 'containerd', 'VirtualPC']
   tasks:
     - name: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
