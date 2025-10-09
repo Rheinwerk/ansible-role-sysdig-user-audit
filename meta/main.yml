@@ -1,7 +1,6 @@
 ---
 galaxy_info:
-  author: Daniel Schneller
-  namespace: rheinwerk
+  author: rheinwerk
   role_name: sysdig_user_audit
   description: Installs a sysdig based user activity tracer
   company: Rheinwerk
