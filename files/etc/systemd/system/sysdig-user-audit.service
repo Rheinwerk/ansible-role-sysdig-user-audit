@@ -1,10 +1,14 @@
 [Unit]
 Description=User Activity Audit
+# Ensure DKMS has run before starting sysdig (for kernel module dependencies)
+After=dkms.service
+Wants=dkms.service
 
 [Service]
 Type=simple
 Environment="TZ=Europe/Berlin" "LOGFILE=/var/log/sysdig-user-audit.json"
 
+# Ensure DKMS service has completed (soft dependency via Wants= above)
 ExecStartPre=/usr/bin/logger -t useraudit "Starting user activity"
 ExecStartPre=/usr/bin/logger -t useraudit "Writing events to ${LOGFILE}"
 ExecStart=/bin/bash -c '/usr/bin/sysdig -c /usr/local/share/sysdig/chisels/json_useraudit.lua >> ${LOGFILE} 2> >(/usr/bin/logger -t useraudit)'

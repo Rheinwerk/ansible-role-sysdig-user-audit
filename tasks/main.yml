@@ -1,5 +1,15 @@
 ---
 # vim:ft=ansible:ts=2:et:
+- name: Get details of latest sysdig release from Github
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/draios/sysdig/releases/latest
+    method: GET
+  register: sysdig_release
+
+- name: Install latest sysdig release via .deb package from Github
+  ansible.builtin.apt:
+    deb: "{{ (sysdig_release.json | to_json | from_json | json_query('assets[?ends_with(name, `' + ansible_architecture + '.deb`)]') | first).browser_download_url }}"
+    policy_rc_d: 101
 
 - name: Create Local Chisels Directory
   ansible.builtin.file:
