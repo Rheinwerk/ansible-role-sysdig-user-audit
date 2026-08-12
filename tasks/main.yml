@@ -10,8 +10,8 @@
     mode: "0755"
 
 - name: Copy Sysdig Chisel
-  ansible.builtin.copy:
-    src: "{{ item }}"
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
     dest: "/{{ item }}"
     owner: root
     group: root

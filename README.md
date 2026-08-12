@@ -13,7 +13,9 @@ Assumes sysdig to be installed.
 Role Variables
 --------------
 
-None.
+| Variable | Default | Description |
+| --- | --- | --- |
+| `_sysdig_user_audit.detect_ssh_port_forwarding` | `false` | When `true`, extends the `json_useraudit.lua` chisel filter to also capture `connect()`/`accept()` syscalls performed by the `sshd` process itself (not just its child processes), in order to detect SSH port forwarding (`-L`/`-R`/`-D`). Adds an `evt_fwd_direction` field (`"outbound (-L/-D)"` or `"inbound (-R)"`) to matching events. Defaults to `false` so existing consumers of this role are unaffected. |
 
 Dependencies
 ------------

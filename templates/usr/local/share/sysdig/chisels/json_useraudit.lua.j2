@@ -32,6 +32,9 @@ function on_init()
     fdtime = chisel.request_field("evt.datetime")
     fcontainername = chisel.request_field("container.name")
     fcontainerid = chisel.request_field("container.id")
+{% if _sysdig_user_audit.detect_ssh_port_forwarding %}
+    ffdname = chisel.request_field("fd.name")
+{% endif %}
 
     -- dynamically request fields for up to 16 ancestor names and pids.
     -- just to prevent copy and pasting the lines like above.
@@ -46,7 +49,11 @@ function on_init()
     print_container = sysdig.is_print_container_data()
 
     -- set the filter
+{% if _sysdig_user_audit.detect_ssh_port_forwarding %}
+    chisel.set_filter("(proc.aname=sshd and evt.failed=false and ((evt.type=execve and evt.dir=<) or (evt.type=chdir and evt.dir=< and proc.name contains sh and not proc.name contains sshd))) or (proc.name=sshd and evt.dir=< and ((evt.type=accept and fd.lport!=22) or (evt.type=connect and fd.l4proto=tcp and fd.rport!=53)))")
+{% else %}
     chisel.set_filter("proc.aname=sshd and evt.failed=false and ((evt.type=execve and evt.dir=<) or (evt.type=chdir and evt.dir=< and proc.name contains sh and not proc.name contains sshd))")
+{% endif %}
 
     return true
 end
@@ -63,6 +70,9 @@ function on_event()
     local args = evt.field(fargs)
     local type = evt.field(fetype)
     local is_chdir = evt.field(fetype) == "chdir"
+{% if _sysdig_user_audit.detect_ssh_port_forwarding %}
+    local is_fwd = type == "connect" or type == "accept"
+{% endif %}
     local loginshellid = evt.field(floginshellid)
     local penv = evt.field(fenv)
     local sudouser=string.match(penv, "SUDO_USER=%S+")
@@ -96,6 +106,12 @@ function on_event()
     if is_chdir then
         output["evt_exe"] = "cd"
         output["evt_args"] = evt.field(fdirectory)
+{% if _sysdig_user_audit.detect_ssh_port_forwarding %}
+    elseif is_fwd then
+        output["evt_exe"] = exe
+        output["evt_args"] = evt.field(ffdname)
+        output["evt_fwd_direction"] = (type == "connect") and "outbound (-L/-D)" or "inbound (-R)"
+{% endif %}
     else
         output["evt_exe"] = exe
         output["evt_args"] = args
