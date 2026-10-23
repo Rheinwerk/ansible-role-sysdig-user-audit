@@ -1,3 +1,4 @@
 ---
 _sysdig_user_audit:
   detect_ssh_port_forwarding: false
+  driver: kmod

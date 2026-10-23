@@ -16,6 +16,7 @@ Role Variables
 | Variable | Default | Description |
 | --- | --- | --- |
 | `_sysdig_user_audit.detect_ssh_port_forwarding` | `false` | When `true`, extends the `json_useraudit.lua` chisel filter to also capture `connect()`/`accept()` syscalls performed by the `sshd` process itself (not just its child processes), in order to detect SSH port forwarding (`-L`/`-R`/`-D`). Adds an `evt_fwd_direction` field (`"outbound (-L/-D)"` or `"inbound (-R)"`) to matching events. Defaults to `false` so existing consumers of this role are unaffected. |
+| `_sysdig_user_audit.driver` | `kmod` | How sysdig captures events. `kmod` uses sysdig's kernel module (built by DKMS from the sysdig `.deb`); `modern_bpf` starts sysdig with `--modern-bpf`, its CO-RE eBPF probe, which needs no kernel module, DKMS or kernel headers but a kernel >= 5.8 with BTF (`/sys/kernel/btf/vmlinux`). The events and the log format are the same. A dict without this key uses `kmod`. |
 
 Dependencies
 ------------
