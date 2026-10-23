@@ -6,6 +6,8 @@ set -u
 
 HOOK=$1
 FAILED=0
+CASE_DIRS=()
+trap 'rm -rf "${CASE_DIRS[@]}"' EXIT
 SYSDIG_PS='12345 ?        Sl     0:01 /usr/bin/sysdig -c /usr/local/share/sysdig/chisels/json_useraudit.lua'
 
 # make_stubs <dir>: stub commands that read the case's fixtures from $FIX and record calls in $CALLS / $LOGS
@@ -78,9 +80,11 @@ not_stopped() { ! grep -q 'stop' "$CALLS" || { echo "unexpected stop"; return 1;
 started() { grep -qx 'sysdig-user-audit start' "$CALLS" || { echo "expected a start"; return 1; }; }
 not_started() { ! grep -q 'start' "$CALLS" || { echo "unexpected start"; return 1; }; }
 
-# new_case: fresh fixture and stub directories
+# new_case: fresh fixture and stub directories. Under /var/tmp, because the molecule containers mount /tmp
+# noexec and the stubs must be executable.
 new_case() {
-	CASE_DIR=$(mktemp -d)
+	CASE_DIR=$(mktemp -d -p "${TEST_TMPDIR:-/var/tmp}")
+	CASE_DIRS+=("$CASE_DIR")
 	FIX=$CASE_DIR/fix
 	mkdir -p "$FIX"
 	make_stubs "$CASE_DIR/bin"
