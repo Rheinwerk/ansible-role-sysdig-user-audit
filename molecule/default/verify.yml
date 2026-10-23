@@ -1,0 +1,69 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+  vars:
+    unit_template: "{{ lookup('env', 'GITHUB_WORKSPACE') }}/templates/etc/systemd/system/sysdig-user-audit.service.j2"
+    sysdig_kmod_command: "/usr/bin/sysdig -c /usr/local/share/sysdig/chisels/json_useraudit.lua"
+    sysdig_modern_bpf_command: "/usr/bin/sysdig --modern-bpf -c /usr/local/share/sysdig/chisels/json_useraudit.lua"
+
+  tasks:
+    - name: Read the installed unit
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/sysdig-user-audit.service
+      register: installed_unit
+
+    - name: The installed unit captures with the kernel module (default driver)
+      ansible.builtin.assert:
+        that:
+          - sysdig_kmod_command in (installed_unit.content | b64decode)
+          - "'--modern-bpf' not in (installed_unit.content | b64decode)"
+
+    - name: Render the unit for each driver setting
+      ansible.builtin.template:
+        src: "{{ unit_template }}"
+        dest: "/tmp/sysdig-user-audit.service.{{ item.name }}"
+        owner: root
+        group: root
+        mode: "0644"
+      vars:
+        _sysdig_user_audit: "{{ item.config }}"
+      loop:
+        - name: no-driver-key
+          config: { detect_ssh_port_forwarding: false }
+        - name: kmod
+          config: { detect_ssh_port_forwarding: false, driver: kmod }
+        - name: modern_bpf
+          config: { detect_ssh_port_forwarding: false, driver: modern_bpf }
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Read the rendered units
+      ansible.builtin.slurp:
+        src: "/tmp/sysdig-user-audit.service.{{ item }}"
+      register: rendered_units
+      loop:
+        - no-driver-key
+        - kmod
+        - modern_bpf
+
+    - name: Only the modern_bpf driver adds --modern-bpf
+      ansible.builtin.assert:
+        that:
+          - sysdig_kmod_command in (rendered_units.results[0].content | b64decode)
+          - sysdig_kmod_command in (rendered_units.results[1].content | b64decode)
+          - sysdig_modern_bpf_command in (rendered_units.results[2].content | b64decode)
+          - "'--modern-bpf' not in (rendered_units.results[0].content | b64decode)"
+          - "'--modern-bpf' not in (rendered_units.results[1].content | b64decode)"
+
+    - name: Copy the PAM hook test
+      ansible.builtin.copy:
+        src: files/test_pam_hook.sh
+        dest: /tmp/test_pam_hook.sh
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Run the PAM hook test against the installed hook
+      ansible.builtin.command: bash /tmp/test_pam_hook.sh /usr/local/sbin/pam_sysdig-user-audit.sh
+      changed_when: false
