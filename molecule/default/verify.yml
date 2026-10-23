@@ -6,6 +6,7 @@
     unit_template: "{{ lookup('env', 'GITHUB_WORKSPACE') }}/templates/etc/systemd/system/sysdig-user-audit.service.j2"
     sysdig_kmod_command: "/usr/bin/sysdig -c /usr/local/share/sysdig/chisels/json_useraudit.lua"
     sysdig_modern_bpf_command: "/usr/bin/sysdig --modern-bpf -c /usr/local/share/sysdig/chisels/json_useraudit.lua"
+    ssh_session: "ssh -i /root/.ssh/id_molecule -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null audit-test@127.0.0.1"
 
   tasks:
     - name: Read the installed unit
@@ -67,3 +68,124 @@
     - name: Run the PAM hook test against the installed hook
       ansible.builtin.command: bash /tmp/test_pam_hook.sh /usr/local/sbin/pam_sysdig-user-audit.sh
       changed_when: false
+
+    # End-to-end: real SSH sessions through sshd's PAM stack with logind (converge_override.yml installs
+    # libpam-systemd, starts logind and sshd, creates the key and a stub /usr/bin/sysdig)
+    - name: Stop the audit before the session tests
+      ansible.builtin.systemd:
+        name: sysdig-user-audit
+        state: stopped
+
+    - name: One non-TTY session starts the audit
+      ansible.builtin.command: "{{ ssh_session }} systemctl is-active sysdig-user-audit"
+      register: non_tty_session
+      changed_when: false
+      failed_when: non_tty_session.stdout != 'active'
+
+    - name: The audit stops after the non-TTY session closed
+      ansible.builtin.command: systemctl is-active sysdig-user-audit
+      register: audit_state
+      until: audit_state.stdout == 'inactive'
+      retries: 10
+      delay: 1
+      changed_when: false
+      failed_when: audit_state.stdout != 'inactive'
+
+    - name: One TTY session starts the audit
+      ansible.builtin.command: "{{ ssh_session }} -tt systemctl is-active sysdig-user-audit"
+      register: tty_session
+      changed_when: false
+      failed_when: (tty_session.stdout | trim) != 'active'
+
+    - name: The audit stops after the TTY session closed
+      ansible.builtin.command: systemctl is-active sysdig-user-audit
+      register: audit_state
+      until: audit_state.stdout == 'inactive'
+      retries: 10
+      delay: 1
+      changed_when: false
+      failed_when: audit_state.stdout != 'inactive'
+
+    - name: Open a long session in the background
+      ansible.builtin.command: "{{ ssh_session }} sleep 20"
+      async: 60
+      poll: 0
+      register: long_session
+      changed_when: false
+
+    - name: The long session started the audit
+      ansible.builtin.command: systemctl is-active sysdig-user-audit
+      register: audit_state
+      until: audit_state.stdout == 'active'
+      retries: 10
+      delay: 1
+      changed_when: false
+      failed_when: audit_state.stdout != 'active'
+
+    - name: A short TTY session opens and closes while the long one is open
+      ansible.builtin.command: "{{ ssh_session }} -tt true"
+      changed_when: false
+
+    - name: Give the short session's close_session time to run
+      ansible.builtin.pause:
+        seconds: 3
+
+    - name: The audit keeps running while the long session is open
+      ansible.builtin.command: systemctl is-active sysdig-user-audit
+      register: audit_state
+      changed_when: false
+      failed_when: audit_state.stdout != 'active'
+
+    - name: Wait for the long session to end
+      ansible.builtin.async_status:
+        jid: "{{ long_session.ansible_job_id }}"
+      register: long_session_result
+      until: long_session_result.finished
+      retries: 30
+      delay: 1
+
+    - name: The audit stops after the last session closed
+      ansible.builtin.command: systemctl is-active sysdig-user-audit
+      register: audit_state
+      until: audit_state.stdout == 'inactive'
+      retries: 10
+      delay: 1
+      changed_when: false
+      failed_when: audit_state.stdout != 'inactive'
+
+    - name: A sysdig that exits marks the unit failed
+      block:
+        - name: Replace the stub with one that exits 1
+          ansible.builtin.copy:
+            content: "#!/bin/bash\nexit 1\n"
+            dest: /usr/bin/sysdig
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Start the audit
+          ansible.builtin.systemd:
+            name: sysdig-user-audit
+            state: started
+
+        - name: The unit ends with Result=exit-code
+          ansible.builtin.command: systemctl show sysdig-user-audit -p Result --value
+          register: audit_result
+          until: audit_result.stdout == 'exit-code'
+          retries: 10
+          delay: 1
+          changed_when: false
+          failed_when: audit_result.stdout != 'exit-code'
+      always:
+        - name: Reset the failed unit
+          ansible.builtin.command: systemctl reset-failed sysdig-user-audit
+          changed_when: false
+          failed_when: false
+
+        - name: Restore the stub sysdig
+          ansible.builtin.copy:
+            src: files/stub_sysdig.sh
+            dest: /usr/bin/sysdig
+            owner: root
+            group: root
+            mode: "0755"
