@@ -9,6 +9,19 @@
     ssh_session: "ssh -i /root/.ssh/id_molecule -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null audit-test@127.0.0.1"
 
   tasks:
+    # Callers replace the whole _sysdig_user_audit dict; one without the driver key must keep working (kmod)
+    - name: Gather the facts the role needs
+      ansible.builtin.setup:
+        gather_subset:
+          - min
+
+    - name: Run the role with a _sysdig_user_audit that has no driver key
+      ansible.builtin.include_role:
+        name: "{{ lookup('env', 'GITHUB_WORKSPACE') }}"
+      vars:
+        _sysdig_user_audit:
+          detect_ssh_port_forwarding: false
+
     - name: Read the installed unit
       ansible.builtin.slurp:
         src: /etc/systemd/system/sysdig-user-audit.service
