@@ -4,6 +4,7 @@
 AUDIT_LOG=${AUDIT_LOG:-/var/log/sysdig-user-audit.json}
 READY_FLAG=${READY_FLAG:-/run/sysdig-user-audit.ready}
 READY_TIMEOUT_MS=${READY_TIMEOUT_MS:-5000}
+LOCK=${LOCK:-/run/sysdig-user-audit.lock}
 
 # Wait until the audit records. sysdig needs a moment after its start before it records (~0.2 s with the
 # kernel module), and the session's first commands run right after this hook; without the wait they are lost.
@@ -48,6 +49,14 @@ count_other_sessions() {
 	echo "${count}"
 }
 
+# Serialize the decisions of concurrent PAM sessions: a logout counts the other sessions and stops the audit, a
+# login starts it. Without the lock, a login can register between the last logout's count and its stop and then
+# run unrecorded. The lock is released before the readiness wait, which can take a while.
+exec 9> "${LOCK}"
+if ! flock -w 10 9; then
+	logger -p auth.warning -t pam_exec "sysdig-user-audit: no lock after 10 s, continuing without it"
+fi
+
 # Count the other open login sessions; "unknown" if logind cannot be asked
 if ! other_sessions=$(count_other_sessions); then
 	other_sessions=unknown
@@ -72,6 +81,7 @@ if [[ "${PAM_TYPE}" == "open_session" ]]; then
 		logger -p auth.notice -t pam_exec "No sysdig running on user-login. Starting sysdig-user-audit."
 	fi
 	service sysdig-user-audit start
+	flock -u 9
 	wait_until_recording
 fi
 
@@ -81,3 +91,4 @@ if [[ ${PAM_TYPE} == "close_session" && ${other_sessions} == "0" ]]; then
 	logger -t auth.notice -t pam_exec "Closing last user session. Stopping sysdig-user-audit."
 	service sysdig-user-audit stop
 fi
+flock -u 9

@@ -19,7 +19,7 @@ make_stubs() {
 #!/bin/bash
 [[ -e "$FIX/fail" ]] && exit 1
 case "$1" in
-	list-sessions) cat "$FIX/list" 2>/dev/null ;;
+	list-sessions) echo "loginctl list-sessions" >> "$CALLS"; cat "$FIX/list" 2>/dev/null ;;
 	show-session) id=$2; prop=$4; cat "$FIX/$id.$prop" ;;
 	*) exit 2 ;;
 esac
@@ -45,9 +45,14 @@ EOF
 	cat > "$bin/env" <<'EOF'
 #!/bin/bash
 n=$(( $(cat "$FIX/env_calls" 2>/dev/null || echo 0) + 1 )); echo $n > "$FIX/env_calls"
+echo "probe" >> "$CALLS"
 [[ -e "$FIX/record_on" && $n -eq $(cat "$FIX/record_on") ]] && echo "{\"evt_args\":\"$2\"}" >> "$AUDIT_LOG"
 [[ -e "$FIX/flag_on" && $n -eq $(cat "$FIX/flag_on") ]] && touch "$READY_FLAG"
 exit 0
+EOF
+	cat > "$bin/flock" <<'EOF'
+#!/bin/bash
+echo "flock $*" >> "$CALLS"
 EOF
 	chmod 0755 "$bin"/*
 }
@@ -66,7 +71,7 @@ run_case() {
 	: > "$CALLS"; : > "$LOGS"; touch "$CASE_DIR/audit.json"
 	local timeout; timeout=$(cat "$FIX/timeout" 2>/dev/null || echo 1000)
 	local vars=(PATH="$CASE_DIR/bin:$PATH" FIX="$FIX" CALLS="$CALLS" LOGS="$LOGS" PAM_TYPE="$pam_type"
-		AUDIT_LOG="$CASE_DIR/audit.json" READY_FLAG="$CASE_DIR/ready" READY_TIMEOUT_MS="$timeout")
+		AUDIT_LOG="$CASE_DIR/audit.json" READY_FLAG="$CASE_DIR/ready" READY_TIMEOUT_MS="$timeout" LOCK="$CASE_DIR/lock")
 	local t0; t0=$(date +%s%N)
 	if [[ "$session_id" == "-" ]]; then
 		/usr/bin/env -u XDG_SESSION_ID "${vars[@]}" bash -e "$HOOK" > "$CASE_DIR/out" 2>&1
@@ -92,6 +97,17 @@ stopped() { grep -qx 'sysdig-user-audit stop' "$CALLS" || { echo "expected a sto
 not_stopped() { ! grep -q 'stop' "$CALLS" || { echo "unexpected stop"; return 1; }; }
 started() { grep -qx 'sysdig-user-audit start' "$CALLS" || { echo "expected a start"; return 1; }; }
 not_started() { ! grep -q 'start' "$CALLS" || { echo "unexpected start"; return 1; }; }
+# in_order <pattern>...: each pattern's first line in $CALLS comes after the previous one's
+in_order() {
+	local prev=0 n pat
+	for pat in "$@"; do
+		n=$(grep -n -m1 -E "$pat" "$CALLS" | cut -d: -f1)
+		[[ -n "$n" && $n -gt $prev ]] || { echo "order: '$pat' missing or before line $prev"; return 1; }
+		prev=$n
+	done
+}
+locked_count_and_stop() { stopped > /dev/null && in_order '^flock -w' '^loginctl list-sessions' 'sysdig-user-audit stop' '^flock -u' || { in_order '^flock -w' '^loginctl list-sessions' 'sysdig-user-audit stop' '^flock -u'; return 1; }; }
+locked_start_then_wait() { recorded > /dev/null && in_order '^flock -w' 'sysdig-user-audit start' '^flock -u' '^probe' || { in_order '^flock -w' 'sysdig-user-audit start' '^flock -u' '^probe'; return 1; }; }
 # readiness wait
 recorded() {
 	started > /dev/null && [[ -e "$CASE_DIR/ready" ]] && grep -q 'recording after' "$LOGS" \
@@ -147,6 +163,16 @@ run_case no_session_id_counts_others close_session - stopped
 new_case
 touch "$FIX/fail"
 run_case loginctl_failure_keeps_running close_session 128 not_stopped
+
+# the lock serializes count+stop and start, so a login cannot slip between the last logout's count and its stop
+new_case
+printf '%s\n' '128 1000 cd-admin - 338006 user - no -' > "$FIX/list"
+session 128 user active
+run_case close_counts_and_stops_under_the_lock close_session 128 locked_count_and_stop
+
+new_case
+: > "$FIX/list"; echo '1 ? Ss 0:01 /sbin/init' > "$FIX/ps"; echo 2 > "$FIX/record_on"
+run_case open_starts_under_the_lock_and_waits_outside open_session 128 locked_start_then_wait
 
 # open_session: start (idempotent), then wait until the audit records a probe command or the ready flag exists
 new_case
