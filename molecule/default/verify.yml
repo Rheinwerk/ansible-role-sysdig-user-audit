@@ -20,6 +20,12 @@
           - sysdig_kmod_command in (installed_unit.content | b64decode)
           - "'--modern-bpf' not in (installed_unit.content | b64decode)"
 
+    - name: The installed unit removes the readiness flag when the audit starts and when it stops
+      ansible.builtin.assert:
+        that:
+          - "'ExecStartPre=/bin/rm -f /run/sysdig-user-audit.ready' in (installed_unit.content | b64decode)"
+          - "'ExecStopPost=/bin/rm -f /run/sysdig-user-audit.ready' in (installed_unit.content | b64decode)"
+
     - name: Render the unit for each driver setting
       ansible.builtin.template:
         src: "{{ unit_template }}"
@@ -76,11 +82,11 @@
         name: sysdig-user-audit
         state: stopped
 
-    - name: One non-TTY session starts the audit
-      ansible.builtin.command: "{{ ssh_session }} systemctl is-active sysdig-user-audit"
+    - name: One non-TTY session starts the audit and finds it recording (readiness flag written by the hook)
+      ansible.builtin.command: "{{ ssh_session }} 'systemctl is-active sysdig-user-audit; test -e /run/sysdig-user-audit.ready && echo flag'"
       register: non_tty_session
       changed_when: false
-      failed_when: non_tty_session.stdout != 'active'
+      failed_when: non_tty_session.stdout_lines != ['active', 'flag']
 
     - name: The audit stops after the non-TTY session closed
       ansible.builtin.command: systemctl is-active sysdig-user-audit
@@ -90,6 +96,12 @@
       delay: 1
       changed_when: false
       failed_when: audit_state.stdout != 'inactive'
+
+    - name: The readiness flag is gone after the audit stopped
+      ansible.builtin.stat:
+        path: /run/sysdig-user-audit.ready
+      register: ready_flag
+      failed_when: ready_flag.stat.exists
 
     - name: One TTY session starts the audit
       ansible.builtin.command: "{{ ssh_session }} -tt systemctl is-active sysdig-user-audit"

@@ -5,9 +5,13 @@ Description=User Activity Audit
 Type=simple
 Environment="TZ=Europe/Berlin" "LOGFILE=/var/log/sysdig-user-audit.json"
 
+# The PAM hook writes the readiness flag once the audit records, see pam_sysdig-user-audit.sh
+ExecStartPre=/bin/rm -f /run/sysdig-user-audit.ready
 ExecStartPre=/usr/bin/logger -t useraudit "Starting user activity"
 ExecStartPre=/usr/bin/logger -t useraudit "Writing events to ${LOGFILE}"
 ExecStart=/bin/bash -c '/usr/bin/sysdig {{ '--modern-bpf ' if (_sysdig_user_audit.driver | default('kmod')) == 'modern_bpf' else '' }}-c /usr/local/share/sysdig/chisels/json_useraudit.lua >> ${LOGFILE} 2> >(/usr/bin/logger -t useraudit)'
+
+ExecStopPost=/bin/rm -f /run/sysdig-user-audit.ready
 
 [Install]
 WantedBy=default.target
