@@ -1,5 +1,36 @@
 #!/bin/bash -e
 
+# Defaults; the environment can override them (used by the tests, PAM does not set them)
+AUDIT_LOG=${AUDIT_LOG:-/var/log/sysdig-user-audit.json}
+READY_FLAG=${READY_FLAG:-/run/sysdig-user-audit.ready}
+READY_TIMEOUT_MS=${READY_TIMEOUT_MS:-5000}
+
+# Wait until the audit records. sysdig needs a moment after its start before it records (~0.2 s with the
+# kernel module), and the session's first commands run right after this hook; without the wait they are lost.
+# The hook runs below sshd, so the audit records the commands it runs: run a probe command with a unique argument
+# until it shows up in the audit log, or until another session has written the ready flag (the unit removes the
+# flag when the audit starts or stops). Gives up after READY_TIMEOUT_MS, so a broken audit never blocks logins.
+wait_until_recording() {
+	local nonce start waited
+	[[ -e "${READY_FLAG}" ]] && return 0
+	nonce="sysdig-user-audit-ready-$(date +%s%N)-$$"
+	start=$(date +%s%N)
+	while :; do
+		env true "${nonce}"
+		waited=$(( ($(date +%s%N) - start) / 1000000 ))
+		if [[ -e "${READY_FLAG}" ]] || tail -c 65536 "${AUDIT_LOG}" 2>/dev/null | grep -qF "${nonce}"; then
+			touch "${READY_FLAG}"
+			logger -p auth.notice -t pam_exec "sysdig-user-audit recording after ${waited} ms"
+			return 0
+		fi
+		if (( waited >= READY_TIMEOUT_MS )); then
+			logger -p auth.warning -t pam_exec "sysdig-user-audit not recording after ${waited} ms"
+			return 0
+		fi
+		sleep 0.05
+	done
+}
+
 # Print the number of open login sessions other than the one this hook runs for, as logind sees them.
 # w(1) cannot be used: Debian 13 has no utmp, so w lists logind sessions there, including non-TTY sessions
 # and the session that is being closed. pam_systemd sets XDG_SESSION_ID and pam_exec passes it on.
@@ -33,10 +64,15 @@ if [[ -z "${PAM_TYPE}" ]]; then
 	exit 0
 fi
 
-# If a session is started and there is no sysdig user audit process running yet, start it.
-if [[ "${PAM_TYPE}" == "open_session" && ${sysdigs} -eq 0 ]]; then
-	logger -p auth.notice -t pam_exec "No sysdig running on user-login. Starting sysdig-user-audit."
+# If a session is started, make sure the audit runs and records before the session's commands do. The start is
+# also issued when a sysdig process exists: it may be the one of an audit that is just stopping, and starting a
+# running unit does nothing.
+if [[ "${PAM_TYPE}" == "open_session" ]]; then
+	if [[ ${sysdigs} -eq 0 ]]; then
+		logger -p auth.notice -t pam_exec "No sysdig running on user-login. Starting sysdig-user-audit."
+	fi
 	service sysdig-user-audit start
+	wait_until_recording
 fi
 
 # If a session is closed and no other session is open, stop the sysdig-user-audit service. If the

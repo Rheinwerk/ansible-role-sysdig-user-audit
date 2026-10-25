@@ -1,5 +1,6 @@
 #!/bin/bash
-# Tests the session counting of pam_sysdig-user-audit.sh with stubbed loginctl, service, logger, ps and w.
+# Tests pam_sysdig-user-audit.sh (session counting, readiness wait) with stubbed loginctl, service, logger, ps, w
+# and env.
 # Usage: test_pam_hook.sh <path to pam_sysdig-user-audit.sh>
 # Prints "ok <case>" or "FAIL <case>: <reason>" per case and exits non-zero if any case failed.
 set -u
@@ -39,6 +40,15 @@ EOF
 #!/bin/bash
 echo "w-called" >> "$CALLS"
 EOF
+	# env stands in for the readiness probe "env true <nonce>": counts its calls; on call $FIX/record_on it
+	# "records" the probe (appends the nonce to the audit log), on call $FIX/flag_on it writes the ready flag
+	cat > "$bin/env" <<'EOF'
+#!/bin/bash
+n=$(( $(cat "$FIX/env_calls" 2>/dev/null || echo 0) + 1 )); echo $n > "$FIX/env_calls"
+[[ -e "$FIX/record_on" && $n -eq $(cat "$FIX/record_on") ]] && echo "{\"evt_args\":\"$2\"}" >> "$AUDIT_LOG"
+[[ -e "$FIX/flag_on" && $n -eq $(cat "$FIX/flag_on") ]] && touch "$READY_FLAG"
+exit 0
+EOF
 	chmod 0755 "$bin"/*
 }
 
@@ -53,15 +63,18 @@ session() {
 run_case() {
 	local name=$1 pam_type=$2 session_id=$3 check=$4 rc
 	CALLS=$CASE_DIR/calls LOGS=$CASE_DIR/logs
-	: > "$CALLS"; : > "$LOGS"
+	: > "$CALLS"; : > "$LOGS"; touch "$CASE_DIR/audit.json"
+	local timeout; timeout=$(cat "$FIX/timeout" 2>/dev/null || echo 1000)
+	local vars=(PATH="$CASE_DIR/bin:$PATH" FIX="$FIX" CALLS="$CALLS" LOGS="$LOGS" PAM_TYPE="$pam_type"
+		AUDIT_LOG="$CASE_DIR/audit.json" READY_FLAG="$CASE_DIR/ready" READY_TIMEOUT_MS="$timeout")
+	local t0; t0=$(date +%s%N)
 	if [[ "$session_id" == "-" ]]; then
-		env -u XDG_SESSION_ID PATH="$CASE_DIR/bin:$PATH" FIX="$FIX" CALLS="$CALLS" LOGS="$LOGS" \
-			PAM_TYPE="$pam_type" bash -e "$HOOK" > "$CASE_DIR/out" 2>&1
+		/usr/bin/env -u XDG_SESSION_ID "${vars[@]}" bash -e "$HOOK" > "$CASE_DIR/out" 2>&1
 	else
-		env PATH="$CASE_DIR/bin:$PATH" FIX="$FIX" CALLS="$CALLS" LOGS="$LOGS" \
-			PAM_TYPE="$pam_type" XDG_SESSION_ID="$session_id" bash -e "$HOOK" > "$CASE_DIR/out" 2>&1
+		/usr/bin/env "${vars[@]}" XDG_SESSION_ID="$session_id" bash -e "$HOOK" > "$CASE_DIR/out" 2>&1
 	fi
 	rc=$?
+	ELAPSED_MS=$(( ($(date +%s%N) - t0) / 1000000 ))
 	local reason=""
 	grep -q 'w-called' "$CALLS" && reason="w was called"
 	grep -q 'other_sessions=' "$LOGS" || reason="${reason:+$reason; }no other_sessions= in the log"
@@ -79,6 +92,20 @@ stopped() { grep -qx 'sysdig-user-audit stop' "$CALLS" || { echo "expected a sto
 not_stopped() { ! grep -q 'stop' "$CALLS" || { echo "unexpected stop"; return 1; }; }
 started() { grep -qx 'sysdig-user-audit start' "$CALLS" || { echo "expected a start"; return 1; }; }
 not_started() { ! grep -q 'start' "$CALLS" || { echo "unexpected start"; return 1; }; }
+# readiness wait
+recorded() {
+	started > /dev/null && [[ -e "$CASE_DIR/ready" ]] && grep -q 'recording after' "$LOGS" \
+		|| { echo "expected start, flag and 'recording after'"; return 1; }
+}
+no_probe() { started > /dev/null && [[ ! -e "$FIX/env_calls" ]] || { echo "expected start without probe"; return 1; }; }
+timed_out() {
+	started > /dev/null && [[ ! -e "$CASE_DIR/ready" ]] && grep -q 'not recording after' "$LOGS" && (( ELAPSED_MS < 2000 )) \
+		|| { echo "expected a warning, no flag, < 2 s (took ${ELAPSED_MS} ms)"; return 1; }
+}
+flag_by_other() {
+	started > /dev/null && ! grep -q 'not recording after' "$LOGS" && [[ -e "$CASE_DIR/ready" ]] \
+		|| { echo "expected to stop waiting once the flag appeared"; return 1; }
+}
 
 # new_case: fresh fixture and stub directories. Under /var/tmp, because the molecule containers mount /tmp
 # noexec and the stubs must be executable.
@@ -121,12 +148,25 @@ new_case
 touch "$FIX/fail"
 run_case loginctl_failure_keeps_running close_session 128 not_stopped
 
+# open_session: start (idempotent), then wait until the audit records a probe command or the ready flag exists
 new_case
-: > "$FIX/list"; echo '1 ? Ss 0:01 /sbin/init' > "$FIX/ps"
-run_case open_starts_when_absent open_session 128 started
+: > "$FIX/list"; echo '1 ? Ss 0:01 /sbin/init' > "$FIX/ps"; echo 3 > "$FIX/record_on"
+run_case open_waits_until_recorded open_session 128 recorded
 
 new_case
-: > "$FIX/list"; echo "$SYSDIG_PS" > "$FIX/ps"
-run_case open_no_start_when_running open_session 128 not_started
+: > "$FIX/list"; echo "$SYSDIG_PS" > "$FIX/ps"; touch "$CASE_DIR/ready"
+run_case open_no_wait_when_flag_exists open_session 128 no_probe
+
+new_case
+: > "$FIX/list"; echo '1 ? Ss 0:01 /sbin/init' > "$FIX/ps"; echo 300 > "$FIX/timeout"
+run_case open_times_out open_session 128 timed_out
+
+new_case
+: > "$FIX/list"; echo "$SYSDIG_PS" > "$FIX/ps"; echo 2 > "$FIX/flag_on"
+run_case open_stops_waiting_when_flag_appears open_session 128 flag_by_other
+
+new_case
+: > "$FIX/list"; echo "$SYSDIG_PS" > "$FIX/ps"; echo 1 > "$FIX/record_on"
+run_case open_starts_even_when_running open_session 128 recorded
 
 exit $FAILED
