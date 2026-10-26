@@ -46,9 +46,16 @@
     - "etc/init/sysdig-user-audit.conf"
   when: ansible_facts["service_mgr"] == "upstart"
 
+- name: Check the capture driver
+  ansible.builtin.assert:
+    that:
+      - (_sysdig_user_audit.driver | default('kmod')) in ['kmod', 'modern_bpf']
+    fail_msg: "_sysdig_user_audit.driver must be kmod or modern_bpf, not {{ _sysdig_user_audit.driver | default('kmod') }}"
+    quiet: true
+
 - name: Copy systemd Service Definition
-  ansible.builtin.copy:
-    src: "{{ item }}"
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
     dest: "/{{ item }}"
     owner: root
     group: root

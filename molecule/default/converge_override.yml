@@ -14,3 +14,69 @@
     mode: "0755"
     owner: root
   when: ansible_facts['virtualization_type'] in ['docker', 'podman', 'lxc', 'containerd', 'VirtualPC']
+
+# The session tests in verify.yml open real SSH sessions: they need logind (pam_systemd), sshd, a test user
+# with a key and something that runs as /usr/bin/sysdig
+- name: Install logind's PAM module and D-Bus
+  ansible.builtin.package:
+    name:
+      - libpam-systemd
+      - dbus
+    state: present
+
+- name: Start D-Bus, logind and sshd
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+  loop:
+    - dbus
+    - systemd-logind
+    - ssh
+
+- name: Create root's .ssh directory
+  ansible.builtin.file:
+    path: /root/.ssh
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Create the SSH key for the session tests
+  ansible.builtin.command: ssh-keygen -q -t ed25519 -N '' -C molecule -f /root/.ssh/id_molecule
+  args:
+    creates: /root/.ssh/id_molecule
+
+- name: Read the public key
+  ansible.builtin.slurp:
+    src: /root/.ssh/id_molecule.pub
+  register: molecule_public_key
+
+- name: Create the user for the session tests
+  ansible.builtin.user:
+    name: audit-test
+    shell: /bin/bash
+    create_home: true
+
+- name: Create audit-test's .ssh directory
+  ansible.builtin.file:
+    path: /home/audit-test/.ssh
+    state: directory
+    owner: audit-test
+    group: audit-test
+    mode: "0700"
+
+- name: Authorize the key for audit-test
+  ansible.builtin.copy:
+    content: "{{ molecule_public_key.content | b64decode }}"
+    dest: /home/audit-test/.ssh/authorized_keys
+    owner: audit-test
+    group: audit-test
+    mode: "0600"
+
+- name: Install a stub sysdig
+  ansible.builtin.copy:
+    src: files/stub_sysdig.sh
+    dest: /usr/bin/sysdig
+    owner: root
+    group: root
+    mode: "0755"
